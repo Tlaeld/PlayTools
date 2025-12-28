@@ -22,12 +22,12 @@ public class ActionDispatcher {
     static private var actions = [Action]()
     static private var buttonHandlers: [String: [(Bool) -> Void]] = [:]
 
-    static private let PRIORITY_COUNT = 3
+    static private let priorityCount = 3
     // You can't put more than 8 cameras or 8 joysticks in a keymap right?
-    static private let MAPPING_COUNT_PER_PRIORITY = 8
+    static private let mappingCountPerPriority = 8
     static private let directionPadHandlers: [[ManagedAtomic<AtomicHandler>]] = Array(
-        (0..<PRIORITY_COUNT).map({_ in
-            (0..<MAPPING_COUNT_PER_PRIORITY).map({_ in ManagedAtomic<AtomicHandler>(.EMPTY)})
+        (0..<priorityCount).map({_ in
+            (0..<mappingCountPerPriority).map({_ in ManagedAtomic<AtomicHandler>(.EMPTY)})
         })
     )
 
@@ -54,32 +54,32 @@ public class ActionDispatcher {
         // in future, keymap format will be upgraded.
         // PlayTools would maintain limited backwards compatibility.
         // Meanwhile, keymap format upgrade would be rare.
-        if !keymap.keymapData.version.hasPrefix(keymapVersion) {
+        if !keymap.currentKeymap.version.hasPrefix(keymapVersion) {
             DispatchQueue.main.asyncAfter(
                 deadline: .now() + .seconds(5)) {
                     Toast.showHint(title: "Keymap format too new",
-                       text: ["Current keymap version \(keymap.keymapData.version)" +
+                       text: ["Current keymap version \(keymap.currentKeymap.version)" +
                               " is too new and cannot be recognized\n" +
-                             "For protection of your data, keymap is not loaded\n" +
-                             "Please upgrade PlayCover, " +
+                              "For protection of your data, keymap is not loaded\n" +
+                              "Please upgrade PlayCover, " +
                               "or import an older version of keymap (requires \(keymapVersion)x"])
             }
             return
         }
 
-        for button in keymap.keymapData.buttonModels {
+        for button in keymap.currentKeymap.buttonModels {
             actions.append(ButtonAction(data: button))
         }
 
-        for draggableButton in keymap.keymapData.draggableButtonModels {
+        for draggableButton in keymap.currentKeymap.draggableButtonModels {
             actions.append(DraggableButtonAction(data: draggableButton))
         }
 
-        for mouse in keymap.keymapData.mouseAreaModel {
+        for mouse in keymap.currentKeymap.mouseAreaModel {
             actions.append(CameraAction(data: mouse))
         }
 
-        for joystick in keymap.keymapData.joystickModel {
+        for joystick in keymap.currentKeymap.joystickModel {
             // Left Thumbstick, Right Thumbstick, Mouse
             if JoystickModel.isAnalog(joystick) {
                 actions.append(ContinuousJoystickAction(data: joystick))
@@ -203,7 +203,7 @@ public class ActionDispatcher {
     }
 
     static public func dispatch(key: String, valueX: CGFloat, valueY: CGFloat) -> Bool {
-        for priority in 0..<PRIORITY_COUNT {
+        for priority in 0..<priorityCount {
             if let handler = directionPadHandlers[priority].first(where: { handler in
                 handler.load(ordering: .acquiring).key == key
             }) {

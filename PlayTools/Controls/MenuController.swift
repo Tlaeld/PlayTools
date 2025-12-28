@@ -72,8 +72,43 @@ extension UIApplication {
         DebugController.instance.toggleDebugOverlay()
     }
 
-    @objc func hideCursor(_ sender: AnyObject) {
+    @objc
+    func hideCursor(_ sender: AnyObject) {
         AKInterface.shared!.hideCursorMove()
+    }
+
+    @objc
+    func nextKeymap(_ sender: AnyObject) {
+        let isCmdK = mode == .editor
+
+        if isCmdK {
+            ModeAutomaton.onCmdK()
+        }
+
+        keymap.nextKeymap()
+        Toast.showHint(title: "Switched to next keymap: \(keymap.currentKeymapName)")
+        ActionDispatcher.build()
+
+        if isCmdK {
+            ModeAutomaton.onCmdK()
+        }
+    }
+
+    @objc
+    func previousKeymap(_ sender: AnyObject) {
+        let isCmdK = mode == .editor
+
+        if isCmdK {
+            ModeAutomaton.onCmdK()
+        }
+
+        keymap.previousKeymap()
+        Toast.showHint(title: "Switched to previous keymap: \(keymap.currentKeymapName)")
+        ActionDispatcher.build()
+
+        if isCmdK {
+            ModeAutomaton.onCmdK()
+        }
     }
 }
 
@@ -107,7 +142,11 @@ var keymapping = [
     NSLocalizedString("menu.keymapping.toggleDebug", tableName: "Playtools",
                       value: "Toggle Debug Overlay", comment: ""),
     NSLocalizedString("menu.keymapping.hide.pointer", tableName: "Playtools",
-                      value: "Hide Mouse Pointer", comment: "")
+                      value: "Hide Mouse Pointer", comment: ""),
+    NSLocalizedString("menu.keymapping.previousKeymap", tableName: "Playtools",
+                      value: "Previous Keymap", comment: ""),
+    NSLocalizedString("menu.keymapping.nextKeymap", tableName: "Playtools",
+                      value: "Next Keymap", comment: "")
   ]
 var keymappingSelectors = [#selector(UIApplication.switchEditorMode(_:)),
                            #selector(UIApplication.removeElement(_:)),
@@ -115,11 +154,33 @@ var keymappingSelectors = [#selector(UIApplication.switchEditorMode(_:)),
                            #selector(UIApplication.downscaleElement(_:)),
                            #selector(UIApplication.rotateView(_:)),
                            #selector(UIApplication.toggleDebugOverlay(_:)),
-                           #selector(UIApplication.hideCursor(_:))
+                           #selector(UIApplication.hideCursor(_:)),
+                           #selector(UIApplication.previousKeymap(_:)),
+                           #selector(UIApplication.nextKeymap(_:))
     ]
 
 class MenuController {
     init(with builder: UIMenuBuilder) {
+    #if canImport(UIKit.UIMainMenuSystem)
+        if #available(iOS 26.0, *) {
+            // Delay to avoid error
+            // Cannot set a main menu system configuration while the main menu system is building.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                let configuration = UIMainMenuSystem.Configuration()
+                configuration.sidebarPreference = .included
+                UIMainMenuSystem.shared.setBuildConfiguration(configuration) { builder in
+                    self.setupMenu(with: builder)
+                }
+            }
+        } else {
+            setupMenu(with: builder)
+        }
+    #else
+        setupMenu(with: builder)
+    #endif
+    }
+
+    func setupMenu(with builder: UIMenuBuilder) {
         if Toucher.logEnabled {
             builder.insertSibling(MenuController.debuggingMenu(), afterMenu: .view)
         }
@@ -156,8 +217,17 @@ class MenuController {
     }
 
     class func keymappingMenu() -> UIMenu {
-        let keyCommands = [ "K", UIKeyCommand.inputDelete,
-                            UIKeyCommand.inputUpArrow, UIKeyCommand.inputDownArrow, "R", "D", "."]
+        let keyCommands = [
+            "K",                            // Toggle keymap editor
+            UIKeyCommand.inputDelete,       // Remove keymap element
+            UIKeyCommand.inputUpArrow,      // Increase keymap element size
+            UIKeyCommand.inputDownArrow,    // Decrease keymap element size
+            "R",                            // Rotate display
+            "D",                            // Toggle debug overlay
+            ".",                            // Hide cursor until move
+            "[",                            // Previous keymap
+            "]"                             // Next keymap
+        ]
         let arrowKeyChildrenCommands = zip(keyCommands, keymapping).map { (command, btn) in
             UIKeyCommand(title: btn,
                          image: nil,

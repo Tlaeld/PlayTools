@@ -9,85 +9,133 @@ import GameController
 let mode = ControlMode.mode
 
 public enum ControlModeLiteral: String {
-    case TEXT_INPUT = "textInput"
-    case CAMERA_ROTATE = "cameraRotate"
-    case ARBITRARY_CLICK = "arbitraryClick"
-    case OFF = "off"
-    case EDITOR = "editor"
+    case textInput
+    case cameraRotate
+    case arbitraryClick
+    case off
+    case editor
 }
 // This class handles different control logic under different control mode
 
 public class ControlMode: Equatable {
     static public let mode = ControlMode()
 
-    private var controlMode = ControlModeLiteral.OFF
+    private var controlMode = ControlModeLiteral.off
 
     private var keyboardAdapter: KeyboardEventAdapter!
     private var mouseAdapter: MouseEventAdapter!
     private var controllerAdapter: ControllerEventAdapter!
+    private var keyWindowObserver: NSObjectProtocol?
 
     public func cursorHidden() -> Bool {
         return mouseAdapter?.cursorHidden() ?? false
     }
 
     public func initialize() {
-        let centre = NotificationCenter.default
-        let main = OperationQueue.main
         if PlaySettings.shared.noKMOnInput {
-            centre.addObserver(forName: UITextField.textDidEndEditingNotification, object: nil, queue: main) { _ in
-                ModeAutomaton.onUITextInputEndEdit()
-                Toucher.writeLog(logMessage: "uitextinput end edit")
-            }
-            centre.addObserver(forName: UITextField.textDidBeginEditingNotification, object: nil, queue: main) { _ in
-                ModeAutomaton.onUITextInputBeginEdit()
-                Toucher.writeLog(logMessage: "uitextinput begin edit")
-            }
-            centre.addObserver(forName: UITextView.textDidEndEditingNotification, object: nil, queue: main) { _ in
-                ModeAutomaton.onUITextInputEndEdit()
-                Toucher.writeLog(logMessage: "uitextinput end edit")
-            }
-            centre.addObserver(forName: UITextView.textDidBeginEditingNotification, object: nil, queue: main) { _ in
-                ModeAutomaton.onUITextInputBeginEdit()
-                Toucher.writeLog(logMessage: "uitextinput begin edit")
-            }
-            set(.ARBITRARY_CLICK)
+            setupTextInputObservers()
+            set(.arbitraryClick)
         } else {
-            set(.OFF)
+            set(.off)
         }
 
-        centre.addObserver(forName: NSNotification.Name.GCControllerDidConnect, object: nil, queue: main) { _ in
-            GCController.current?.extendedGamepad?.valueChangedHandler = {profile, element in
-                self.controllerAdapter.handleValueChanged(profile, element)
-            }
-        }
-
-        AKInterface.shared!.setupKeyboard(keyboard: { keycode, pressed, isRepeat, ctrlModified in
-            self.keyboardAdapter.handleKey(keycode: keycode, pressed: pressed,
-                                           isRepeat: isRepeat, ctrlModified: ctrlModified)},
-          swapMode: ModeAutomaton.onOption)
-
+        setupGameController()
+        setupKeyboard()
         if PlaySettings.shared.enableScrollWheel {
-            AKInterface.shared!.setupScrollWheel({deltaX, deltaY in
-                self.mouseAdapter.handleScrollWheel(deltaX: deltaX, deltaY: deltaY)
-            })
+            setupScrollWheel()
         }
 
         // Mouse polling rate as high as 1000 causes issue to some games
         setupMouseMoved(maxPollingRate: 125)
+        setupMouseButtons()
 
-        AKInterface.shared!.setupMouseButton(left: true, right: false, {_, pressed in
+        if PlaySettings.shared.resizableWindow {
+            initializeResizableWindowSupport()
+        }
+
+        ActionDispatcher.build()
+    }
+
+    private func setupTextInputObservers() {
+        let centre = NotificationCenter.default
+        let main = OperationQueue.main
+        centre.addObserver(forName: UITextField.textDidEndEditingNotification, object: nil, queue: main) { _ in
+            ModeAutomaton.onUITextInputEndEdit()
+            Toucher.writeLog(logMessage: "uitextinput end edit")
+        }
+        centre.addObserver(forName: UITextField.textDidBeginEditingNotification, object: nil, queue: main) { _ in
+            ModeAutomaton.onUITextInputBeginEdit()
+            Toucher.writeLog(logMessage: "uitextinput begin edit")
+        }
+        centre.addObserver(forName: UITextView.textDidEndEditingNotification, object: nil, queue: main) { _ in
+            ModeAutomaton.onUITextInputEndEdit()
+            Toucher.writeLog(logMessage: "uitextinput end edit")
+        }
+        centre.addObserver(forName: UITextView.textDidBeginEditingNotification, object: nil, queue: main) { _ in
+            ModeAutomaton.onUITextInputBeginEdit()
+            Toucher.writeLog(logMessage: "uitextinput begin edit")
+        }
+    }
+
+    private func setupGameController() {
+        let centre = NotificationCenter.default
+        let main = OperationQueue.main
+        centre.addObserver(forName: NSNotification.Name.GCControllerDidConnect, object: nil, queue: main) { _ in
+            GCController.current?.extendedGamepad?.valueChangedHandler = { profile, element in
+                self.controllerAdapter.handleValueChanged(profile, element)
+            }
+        }
+    }
+
+    private func setupKeyboard() {
+        AKInterface.shared!.setupKeyboard(
+            keyboard: { keycode, pressed, isRepeat, ctrlModified in
+                self.keyboardAdapter.handleKey(
+                    keycode: keycode,
+                    pressed: pressed,
+                    isRepeat: isRepeat,
+                    ctrlModified: ctrlModified
+                )
+            },
+            swapMode: ModeAutomaton.onOption
+        )
+    }
+
+    private func setupScrollWheel() {
+        AKInterface.shared!.setupScrollWheel({ deltaX, deltaY in
+            self.mouseAdapter.handleScrollWheel(deltaX: deltaX, deltaY: deltaY)
+        })
+    }
+
+    private func setupMouseButtons() {
+        AKInterface.shared!.setupMouseButton(left: true, right: false, { _, pressed in
             self.mouseAdapter.handleLeftButton(pressed: pressed)
         })
 
-        AKInterface.shared!.setupMouseButton(left: false, right: false, {id, pressed in
+        AKInterface.shared!.setupMouseButton(left: false, right: false, { id, pressed in
             self.mouseAdapter.handleOtherButton(id: id, pressed: pressed)
         })
 
-        AKInterface.shared!.setupMouseButton(left: false, right: true, {id, pressed in
+        AKInterface.shared!.setupMouseButton(left: false, right: true, { id, pressed in
             self.mouseAdapter.handleOtherButton(id: id, pressed: pressed)
         })
+    }
 
-        ActionDispatcher.build()
+    private func initializeResizableWindowSupport() {
+        // Reactivate keymapping once the key window is initialized
+        keyWindowObserver = NotificationCenter.default.addObserver(forName: UIWindow.didBecomeKeyNotification,
+            object: nil, queue: .main) { _ in
+            ActionDispatcher.build()
+            if let observer = self.keyWindowObserver {
+                NotificationCenter.default.removeObserver(observer)
+                self.keyWindowObserver = nil
+            }
+        }
+        // Reactivate keymapping once the user finishes resizing the window
+        NotificationCenter.default.addObserver(forName: Notification.Name("NSWindowDidEndLiveResizeNotification"),
+            object: nil, queue: .main) { _ in
+            ActionDispatcher.build()
+        }
     }
 
     private func setupMouseMoved(maxPollingRate: Int) {
@@ -134,7 +182,7 @@ public class ControlMode: Equatable {
                     screen.switchDock(true)
                 }
 
-                if mode == .OFF || mode == .EDITOR {
+                if mode == .off || mode == .editor {
                     ActionDispatcher.invalidateActions()
                 } else {
                     // In case any touch point failed to release
